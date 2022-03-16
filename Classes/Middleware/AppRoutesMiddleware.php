@@ -67,7 +67,7 @@ class AppRoutesMiddleware implements MiddlewareInterface
 
     protected function bootFrontendController(FrontendUserAuthentication $frontendUserAuthentication, SiteInterface $site, SiteLanguage $language): void
     {
-        if ($GLOBALS['TSFE'] instanceof TypoScriptFrontendController) {
+        if (($GLOBALS['TSFE'] ?? null) instanceof TypoScriptFrontendController) {
             return;
         }
         // @extensionScannerIgnoreLine - the extension scanner shows a strong warning, because it detects that the fourth constructor argument of TSFE is used which was deprecated in TYPO3 v9, however v10 introduced new constructor arguments which we're using here
@@ -76,12 +76,10 @@ class AppRoutesMiddleware implements MiddlewareInterface
             GeneralUtility::makeInstance(Context::class),
             $site,
             $language,
-            new PageArguments($site->getRootPageId(), '0', [])
+            new PageArguments($site->getRootPageId(), '0', []),
+            $frontendUserAuthentication
         );
         $controller->fe_user = $frontendUserAuthentication;
-        $controller->fetch_the_id();
-        $controller->getConfigArray();
-        $controller->settingLanguage();
         $controller->newCObj();
         $GLOBALS['TSFE'] = $controller;
         $GLOBALS['TSFE']->sys_page = GeneralUtility::makeInstance(PageRepository::class);
