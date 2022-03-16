@@ -56,7 +56,7 @@ class AppRoutesMiddleware implements MiddlewareInterface
             throw new \Exception('Route must return a handler parameter which implements ' . RequestHandlerInterface::class, 1604066102);
         }
 
-        if ($parameters['requiresTsfe']) {
+        if ($parameters['requiresTsfe'] ?? false) {
             /** @var FrontendUserAuthentication $feUserAuthentication */
             $feUserAuthentication = $request->getAttribute('frontend.user');
             $this->bootFrontendController($feUserAuthentication, $site, $language);
