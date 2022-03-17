@@ -12,13 +12,14 @@ use Symfony\Component\Routing\Exception\MethodNotAllowedException;
 use Symfony\Component\Routing\Exception\ResourceNotFoundException;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
-use TYPO3\CMS\Core\Domain\Repository\PageRepository;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Site\Entity\SiteInterface;
 use TYPO3\CMS\Core\Site\Entity\SiteLanguage;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Frontend\Authentication\FrontendUserAuthentication;
+use TYPO3\CMS\Frontend\Controller\ErrorController;
 use TYPO3\CMS\Frontend\Controller\TypoScriptFrontendController;
+use TYPO3\CMS\Frontend\Page\PageAccessFailureReasons;
 
 class AppRoutesMiddleware implements MiddlewareInterface
 {
@@ -57,32 +58,50 @@ class AppRoutesMiddleware implements MiddlewareInterface
         }
 
         if ($parameters['requiresTsfe'] ?? false) {
-            /** @var FrontendUserAuthentication $feUserAuthentication */
-            $feUserAuthentication = $request->getAttribute('frontend.user');
-            $this->bootFrontendController($feUserAuthentication, $site, $language);
+            $this->bootFrontendController($site, $request);
         }
 
         return $handler->handle($request);
     }
 
-    protected function bootFrontendController(FrontendUserAuthentication $frontendUserAuthentication, SiteInterface $site, SiteLanguage $language): void
+    protected function bootFrontendController(SiteInterface $site, ServerRequestInterface $request): ResponseInterface
     {
-        if (($GLOBALS['TSFE'] ?? null) instanceof TypoScriptFrontendController) {
-            return;
+        $GLOBALS['TYPO3_REQUEST'] = $request;
+        $pageArguments = $request->getAttribute('routing', null);
+        if (!$pageArguments instanceof PageArguments) {
+            // Page Arguments must be set in order to validate. This middleware only works if PageArguments
+            // is available, and is usually combined with the Page Resolver middleware
+            return GeneralUtility::makeInstance(ErrorController::class)->pageNotFoundAction(
+                $request,
+                'Page Arguments could not be resolved',
+                ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
+            );
         }
-        // @extensionScannerIgnoreLine - the extension scanner shows a strong warning, because it detects that the fourth constructor argument of TSFE is used which was deprecated in TYPO3 v9, however v10 introduced new constructor arguments which we're using here
+        $frontendUser = $request->getAttribute('frontend.user');
+        if (!$frontendUser instanceof FrontendUserAuthentication) {
+            throw new \RuntimeException('The PSR-7 Request attribute "frontend.user" needs to be available as FrontendUserAuthentication object (as created by the FrontendUserAuthenticator middleware).', 1590740612);
+        }
+
         $controller = GeneralUtility::makeInstance(
             TypoScriptFrontendController::class,
             GeneralUtility::makeInstance(Context::class),
             $site,
-            $language,
-            new PageArguments($site->getRootPageId(), '0', []),
-            $frontendUserAuthentication
+            $request->getAttribute('language', $site->getDefaultLanguage()),
+            $pageArguments,
+            $frontendUser
         );
-        $controller->fe_user = $frontendUserAuthentication;
-        $controller->newCObj();
+        if ($pageArguments->getArguments()['no_cache'] ?? $request->getParsedBody()['no_cache'] ?? false) {
+            $controller->set_no_cache('&no_cache=1 has been supplied, so caching is disabled! URL: "' . (string)$request->getUri() . '"');
+        }
+        // Usually only set by the PageArgumentValidator
+        if ($request->getAttribute('noCache', false)) {
+            $controller->no_cache = true;
+        }
+
+        $controller->determineId($request);
+
+        $request = $request->withAttribute('frontend.controller', $controller);
         $GLOBALS['TSFE'] = $controller;
-        $GLOBALS['TSFE']->sys_page = GeneralUtility::makeInstance(PageRepository::class);
     }
 
     protected function getLanguage(SiteInterface $site, ServerRequestInterface $request): SiteLanguage
